@@ -1,0 +1,191 @@
+from typing import *
+from enum import Enum, auto
+from dataclasses import dataclass
+import sys
+from ir import *
+
+__all__ = ["TokenType", "Token", "Keywords", "lex"]
+
+
+class TokenType(Enum):
+    Number = auto()
+    Word = auto()
+    Keyword = auto()
+    Special = auto()
+
+
+@dataclass
+class Token:
+    loc: Tuple[int, int]
+    type: TokenType
+    value: Any
+
+
+Keywords: List[str] = ["end", "const"]
+
+
+class Lexer:
+    def __init__(self, inp) -> None:
+        self.ip = 0
+        self.row = 1
+        self.col = 1
+        self.inp = inp
+
+    def get(self):
+        c = self.inp[self.ip]
+        self.ip += 1
+
+        if c == "\n":
+            self.row += 1
+            self.col = 1
+        else:
+            self.col += 1
+
+        # print(c, end="")
+
+        return c
+
+    def peek(self, offset=0):
+        return self.inp[self.ip + offset]
+
+    def lex(self) -> Generator[Token, Any, None]:
+        while self.ip < len(self.inp):
+
+            # skip whitespaces
+            while self.peek() in " \t\n\r":
+                self.get()
+
+            if self.peek() == "/" and self.peek(1) == "/":
+                while self.peek() != "\n":
+                    self.get()
+                self.get()
+            elif self.peek() in "0123456789":
+                num = 0
+                while self.peek() in "0123456789":
+                    num = num * 10 + int(self.get())
+                yield Token((self.row, self.col), TokenType.Number, num)
+            elif self.peek() not in " \n\t\r()":
+                word = ""
+                while self.peek() not in " \n\t\r()":
+                    word += self.get()
+                if word in Keywords:
+                    yield Token((self.row, self.col), TokenType.Keyword, word)
+                else:
+                    yield Token((self.row, self.col), TokenType.Word, word)
+            elif self.peek() in "()":
+                yield Token((self.row, self.col), TokenType.Special, self.get())
+            else:
+                print(
+                    f"{self.row}:{self.col}: unrecognized character: '{self.peek()}'",
+                    file=sys.stderr,
+                )
+                exit(1)
+
+
+class Parser:
+    def __init__(self, lexer: Lexer) -> None:
+        self.ip = 0
+        self.tokens = [tok for tok in lexer.lex()]
+
+    def peek(self, offset=0):
+        return self.tokens[self.ip + offset]
+
+    def get(self):
+        self.ip += 1
+        print(f"got {self.tokens[self.ip - 1]}")
+        return self.tokens[self.ip - 1]
+
+    def word2op(self, word: Token):
+        assert len(Intrinsic) == 5
+        if word.value == "+":
+            return Op(OpType.Intrinsic, Intrinsic.Add)
+        elif word.value == "-":
+            return Op(OpType.Intrinsic, Intrinsic.Sub)
+        elif word.value == "*":
+            return Op(OpType.Intrinsic, Intrinsic.Mul)
+        elif word.value == "/":
+            return Op(OpType.Intrinsic, Intrinsic.Div)
+        elif word.value == "drop":
+            return Op(OpType.Intrinsic, Intrinsic.Drop)
+        else:
+            print(f"{word.loc[0]}:{word.loc[1]}: unknown word '{word.value}'", file=sys.stderr)
+            exit(1)
+        
+    def com_expr(self, expr: List[Token]):
+        stack = []
+        for ii in expr:
+            if ii.type == TokenType.Number:
+                stack.append(ii.value)
+            else:
+                op = self.word2op(ii)
+                if op.type == OpType.Intrinsic:
+                    if op.operand == Intrinsic.Add:
+                        b = stack.pop()
+                        a = stack.pop()
+                        stack.append(a + b)
+                    elif op.operand == Intrinsic.Sub:
+                        b = stack.pop()
+                        a = stack.pop()
+                        stack.append(a - b)
+                    elif op.operand == Intrinsic.Mul:
+                        b = stack.pop()
+                        a = stack.pop()
+                        stack.append(a * b)
+                    elif op.operand == Intrinsic.Div:
+                        b = stack.pop()
+                        a = stack.pop()
+                        stack.append(a / b)
+                    else:
+                        print(f"{ii.loc[0]}:{ii.loc[1]}: unsupported instruction '{op.operand}' in const expression", file=sys.stderr)
+                        exit(1)
+                else:
+                    print(f"{ii.loc[0]}:{ii.loc[1]}: nesting blocks in const expressions is not supported", file=sys.stderr)
+                    exit(1)
+        assert len(stack) == 1
+        if len(stack) != 1:
+            print(f"{expr[0].loc[0]}:{expr[0].loc[1]}: const expression should have one value left on the stack, not {len(stack)}", file=sys.stderr)
+            exit(1)
+        return Op(OpType.PushInt, stack.pop())
+
+    def parse_const(self):
+        const_kw = self.get()
+        assert const_kw.type == TokenType.Keyword
+        assert const_kw.value == "const"
+
+        name = self.get()
+        assert name.type == TokenType.Word
+
+        expr = []
+        while not (
+            self.peek().type == TokenType.Keyword and self.peek().value == "end"
+        ):
+            expr.append(self.get())
+
+        end = self.get()
+        assert end.type == TokenType.Keyword
+        assert end.value == "end"
+
+        return Op(OpType.DefConst, (name.value, self.com_expr(expr)))
+
+    def parse_next(self):
+        assert len(TokenType) == 4
+        if self.peek().type == TokenType.Word:
+            return self.word2op(self.get())
+
+        elif self.peek().type == TokenType.Number:
+            assert isinstance(self.peek().value, int)
+            return Op(OpType.PushInt, self.get().value)
+
+        elif self.peek().type == TokenType.Keyword:
+            assert len(Keywords) == 2, f"len(Keywords) == {len(Keywords)}"
+            if self.peek().value == "const":
+                const_stmt = self.parse_const()
+                print(const_stmt)
+                return const_stmt
+        else:
+            tok = self.get()
+            print(f"{tok.loc[0]}:{tok.loc[1]}: unexpected token: '{tok.value}'", file=sys.stderr)
+
+    def parse(self):
+        while self.ip < len(self.tokens):
+            yield self.parse_next()

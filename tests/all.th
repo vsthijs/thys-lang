@@ -1,0 +1,41 @@
+// thys-lang is stack based, so there are no variables.
+// a number means that it is pushed on the stack.
+// + is a word. Every does something.
+
+// Push 34 and 35 to the stack
+34 35
+// stack: 34 35
+// Add these values, and push the result
++
+// stack: 69
+
+// The word drop drops one value from the stack.
+drop
+// The stack is now empty
+
+// Constants can also be defined like the following
+const CONSTANT1 25 end
+//    name      value
+
+// const values can also be expressions that can be evaluated at runtime:
+const ADDRESULT 34 35 + end
+
+// This is a function. It does exactly the same as +.
+// The parameters are on the stack and the return values are implicitly returned from the stack.
+// (int int) is the expected stack state (parameters)
+// (int) is the stack state that the function will cause (return type).
+// The return type can also have multiple values like the parameters.
+func (int int) add (int) do
+    +
+end
+
+// A function is called like every other word
+34 35
+add // does the same as +, the first example above
+drop
+
+// const and func are blocks. Every block is ended with the `end` keyword.
+
+// Other files can also be used:
+include "myotherfile.th"
+// This literally copies the contents of this file to this file, so you can use the symbols from that file.
